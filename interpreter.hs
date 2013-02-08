@@ -24,6 +24,7 @@ data LispVal = Atom String
              | String String
              | Bool Bool
              | Vector (Array Int LispVal)
+             | Nil ()
 
 -- Booleans
 parseBool :: Parser LispVal
@@ -125,13 +126,24 @@ parseComplex = do a <- (try parseFloat <|> parseDecimal)
                   return $ Complex (toDouble a :+ toDouble b)
 
 -- Lists
-parseList :: Parser LispVal
-parseList = liftM List $ sepBy parseExpr spaces
+--  parseList :: Parser LispVal
+--  parseList = liftM List $ sepBy parseExpr spaces
 
-parseDottedList :: Parser LispVal
-parseDottedList = do head <- endBy parseExpr spaces
-                     tail <- char '.' >> spaces >> parseExpr
-                     return $ DottedList head tail
+--  parseDottedList :: Parser LispVal
+--  parseDottedList = do head <- endBy parseExpr spaces
+                     --  tail <- char '.' >> spaces >> parseExpr
+                     --  return $ DottedList head tail
+
+parseAnyList :: Parser LispVal
+parseAnyList = do char '('
+                  optional spaces
+                  head <- sepEndBy parseExpr spaces
+                  tail <- (char '.' >> spaces >> parseExpr) <|> return (Nil ())
+                  optional spaces
+                  char ')'
+                  return $ case tail of
+                    (Nil ()) -> List head
+                    otherwise -> DottedList head tail
 
 parseQuoted :: Parser LispVal
 parseQuoted = do char '\''
@@ -170,10 +182,7 @@ parseExpr = parseAtom
                       x <- parseVector
                       char ')'
                       return x)
-          <|> do char '('
-                 x <- (try parseList) <|> parseDottedList
-                 char ')'
-                 return x
+          <|> parseAnyList
 
 -- Print LispVal
 showVal :: LispVal -> String
@@ -196,6 +205,31 @@ eval val@(String _) = val
 eval val@(Number _) = val
 eval val@(Bool _) = val
 eval (List [Atom "quote", val]) = val
+eval (List (Atom func : args)) = apply func $ map eval args
+
+apply :: String -> [LispVal] -> LispVal
+apply func args = maybe (Bool False) ($ args) $ lookup func primitives
+
+primitives :: [(String, [LispVal] -> LispVal)]
+primitives = [("+", numericBinop (+)),
+              ("-", numericBinop (-)),
+              ("*", numericBinop(*)),
+              ("/", numericBinop div),
+              ("mod", numericBinop mod),
+              ("quotient", numericBinop quot),
+              ("remainder", numericBinop rem)]
+
+numericBinop :: (Integer -> Integer -> Integer) -> [LispVal] -> LispVal
+numericBinop op params = Number $ foldl1 op $ map unpackNum params
+
+unpackNum :: LispVal -> Integer
+unpackNum (Number n) = n
+unpackNum (String n) = let parsed = reads n in
+                           if null parsed
+                              then 0
+                              else fst $ parsed !! 0
+unpackNum (List [n]) = unpackNum n
+unpackNum _ = 0
 
 readExpr :: String -> LispVal
 readExpr input = case parse parseExpr "lisp" input of
